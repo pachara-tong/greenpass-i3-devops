@@ -1,0 +1,82 @@
+def project = 'green-wallet-callback'
+def container_name = 'green-wallet-callback'
+def deploy_user = 'jenkins'
+def image_port = '3001'
+def container_port = '3001'
+def env = 'dev'
+def git = 'git@bitbucket.org:i3dev/green-callback.git'
+def default_branch = 'master'
+def clone_dir = 'green-wallet-callback'
+
+pipeline{
+    agent{
+        label 'be'
+    }
+    stages{
+        stage('Checkout'){
+            steps{
+                script{
+                    cleanWs()
+                    sh "rm -rf ${clone_dir}"
+                    sh "mkdir ${clone_dir}"
+                    dir("./${clone_dir}"){
+                        checkout([$class: 'GitSCM', 
+                          branches: [[name: '*/master']], 
+                          doGenerateSubmoduleConfigurations: false, 
+                          extensions: [], 
+                          submoduleCfg: [], 
+                          userRemoteConfigs: [[url: "${git}", credentialsId: 'ubuntu_slave']]])
+                    }   
+                }
+            }
+        }
+        stage("build"){
+            steps{
+                script{
+                    dir("./${clone_dir}"){
+                        sh """
+cat > dockerfile << EOF
+FROM node:18
+WORKDIR /app
+COPY . .
+RUN npm install
+EXPOSE 3001
+CMD ["node", "app.js"]
+EOF
+                    """
+                        sh "docker build -f dockerfile -t ${container_name}:${env} ."
+                    }
+                }
+            }
+        }
+        stage("run"){
+            steps{
+                script{
+                    dir("./${clone_dir}"){
+                        sh "docker rm -f ${container_name} || true"
+                        sh """docker run -itd --restart=always --name=${container_name} \
+                            --log-driver=awslogs --log-opt awslogs-region=ap-southeast-1 --log-opt awslogs-group=${container_name}-${env} --log-opt awslogs-create-group=true \
+                            -p ${container_port}:${image_port} \
+                            -e DB_HOST=10.0.4.171 \
+                            -e DB_USER=greenwallet \
+                            -e DB_PASSWORD=I3Gteway#25577 \
+                            -e DB_DATABASE=greenwallet \
+                            -e DB_PORT=3306 \
+                            -e NODE_ENV=production \
+                            -e TOKEN_SECRET=mcadj65sd6ds9gq5fdahrfopeqff5f6+e \
+                            -e TOKEN=mcadj65sd6ds9gq5fdahrfopeqff5f6+e \
+                            -e ENCRYPTION_KEY=afe4db8d48dd50d8d7c0c90a6f1b800804ca257e5c9275d700215e3d63f07d4c \
+                            -e IV=5b0051938ba62811215abf85c6f28563 \
+                            ${container_name}:${env} """
+                    }
+                }
+            }
+        }
+    }
+    post {
+        always {
+            cleanWs()
+        }
+    }
+
+}

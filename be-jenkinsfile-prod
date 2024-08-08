@@ -1,0 +1,101 @@
+def project = 'be'
+def container_name = 'be'
+def deploy_user = 'ec2-user'
+def image_port = '3000'
+def container_port = '3000'
+def env = 'prod'
+def server = '10.1.5.230'
+def git = 'git@bitbucket.org:i3dev/green-wallet-api.git'
+def default_branch = 'master'
+def clone_dir = 'be'
+
+pipeline{
+    agent{
+        label 'prod-worker'
+    }
+    stages{
+        stage('Checkout'){
+            steps{
+                script{
+                    cleanWs()
+                    sh "rm -rf ${clone_dir}"
+                    sh "mkdir ${clone_dir}"
+                    dir("./${clone_dir}"){
+                        checkout([$class: 'GitSCM', 
+                          branches: [[name: '*/master']], 
+                          doGenerateSubmoduleConfigurations: false, 
+                          extensions: [], 
+                          submoduleCfg: [], 
+                          userRemoteConfigs: [[url: "${git}", credentialsId: 'ubuntu_slave']]])
+                    }   
+                }
+            }
+        }
+        stage("build"){
+            steps{
+                script{
+                    dir("./${clone_dir}"){
+                        sh """
+cat > dockerfile << EOF
+FROM node:18
+WORKDIR /app
+COPY . .
+RUN npm install
+EXPOSE 3000
+CMD ["node", "app.js"]
+EOF
+                    """
+                        sh "docker build -f dockerfile -t ${container_name}:${env} ."
+                    }
+                }
+            }
+        }
+        stage("Transfer Image"){
+            steps{
+                script{
+                    sh "docker save -o ${container_name}.tar ${container_name}:${env}"
+                    sh "scp ${container_name}.tar ${deploy_user}@${server}:~/${container_name}.tar"
+                    sh "docker rmi ${container_name}:${env}"
+                    sh "rm ${container_name}.tar"
+                    sh "ssh ${deploy_user}@${server} 'docker load -i ${container_name}.tar'"
+                }
+            }
+        }
+
+        stage("run"){
+            steps{
+                script{
+                    dir("./${clone_dir}"){
+                        sh "ssh ${deploy_user}@${server} 'docker rm -f ${container_name} || true'"
+                        sh """ssh ${deploy_user}@${server} 'docker run -itd --restart=always --name=${container_name} \
+                            --log-driver=awslogs --log-opt awslogs-region=ap-southeast-1 --log-opt awslogs-group=${container_name}-${env} --log-opt awslogs-create-group=true \
+                            -p ${container_port}:${image_port} \
+                            -e DB_HOST=greenwallet-prod.cluster-ctq4ome2kr70.ap-southeast-1.rds.amazonaws.com \
+                            -e DB_USER=admin \
+                            -e DB_PASSWORD=password \
+                            -e DB_DATABASE=greenwallet \
+                            -e DB_PORT=3306 \
+                            -e TOKEN=mcadj65sd6ds9gahrfopeqff5f6+eq5fd \
+                            -e SECRET=mcadj65sd6ds9gahrfopeqff5f6+eq5fd \
+                            -e ENCRYPTION_KEY=afe4db8d48dd50d8d7c0c90a6f1b800804ca257e5c9275d700215e3d63f07d4c \
+                            -e IV=5b0051938ba62811215abf85c6f28563 \
+                            -e KBANK_URL=https://openapi.kasikornbank.com \
+                            -e CUSTOMER_ID=tzYeEzIpWnadOQiB99OyhVAK4nsWG49G \
+                            -e CUSTOMER_SECRET=2zz7GKvT53MvTs2L \
+                            -e NODE_ENV=production \
+                            -e AWS_REGION=ap-southeast-1 \
+                            -e AWS_S3_BUCKET_NAME=greenwallet \
+                            -e INNO_URL=https://dap-innopower-liff.vekin.co.th \
+                            ${container_name}:${env}' """
+                    }
+                }
+            }
+        }
+    }
+    post {
+        always {
+            cleanWs()
+        }
+    }
+
+}

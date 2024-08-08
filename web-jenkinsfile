@@ -1,0 +1,81 @@
+def project = 'web'
+def container_name = 'web'
+def deploy_user = 'jenkins'
+def image_port = '3000'
+def container_port = '3000'
+def env = 'dev'
+// def git = 'https://vveerasak@bitbucket.org/i3dev/kbank-energy-plus.git'
+def git = 'git@bitbucket.org:i3dev/kbank-energy-plus.git'
+def default_branch = 'master'
+def clone_dir = 'web'
+
+pipeline{
+    agent{
+        label 'web'
+    }
+    stages{
+        stage('Checkout'){
+            steps{
+                script{
+                    cleanWs()
+                    sh "rm -rf ${clone_dir}"
+                    sh "mkdir ${clone_dir}"
+                    dir("./${clone_dir}"){
+                        checkout([$class: 'GitSCM', 
+                          branches: [[name: '*/master']], 
+                          doGenerateSubmoduleConfigurations: false, 
+                          extensions: [], 
+                          submoduleCfg: [], 
+                          userRemoteConfigs: [[url: "${git}", credentialsId: 'ubuntu_slave']]])
+                    }   
+                }
+            }
+        }
+        stage("build"){
+            steps{
+                script{
+                    dir("./${clone_dir}"){
+                        sh """
+cat > dockerfile << EOF
+FROM node:18
+WORKDIR /app
+COPY . .
+ENV API_URL=https://oud29xxh6i.execute-api.ap-southeast-1.amazonaws.com/uat
+ENV NEXT_PUBLIC_LINE_PROVIDER_ID=2001763638-KRQRgQ0R
+ENV NEXT_PUBLIC_IS_DEVELOP=false
+ENV NEXT_PUBLIC_IP_API_URL=https://api.ipify.org?format=json
+ENV NEXT_PUBLIC_SITE_KEY=0x4AAAAAAAVBIAzv-jA_krBN
+ENV SECRET_KEY=0x4AAAAAAAVBID0Huv7trQ57-1QvmQEvnJk
+ENV SITE_VERIFY_URL=https://challenges.cloudflare.com/turnstile/v0/siteverify
+RUN npm install
+RUN npm run build
+EXPOSE 3000
+CMD ["npm", "start"]
+EOF
+                    """
+                        sh "docker build -f dockerfile -t ${container_name}:${env} ."
+                    }
+                }
+            }
+        }
+        stage("run"){
+            steps{
+                script{
+                    dir("./${clone_dir}"){
+                        sh "docker rm -f ${container_name} || true"
+                        sh """docker run -itd --restart=always --name=${container_name} \
+                            --log-driver=awslogs --log-opt awslogs-region=ap-southeast-1 --log-opt awslogs-group=${container_name}-${env} --log-opt awslogs-create-group=true \
+                            -p ${container_port}:${image_port} \
+                            ${container_name}:${env} """
+                    }
+                }
+            }
+        }
+    }
+    post {
+        always {
+            cleanWs()
+        }
+    }
+
+}
