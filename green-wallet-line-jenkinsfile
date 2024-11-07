@@ -37,7 +37,7 @@ pipeline{
                     dir("./${clone_dir}"){
                         sh """
 cat > dockerfile << EOF
-FROM node:18
+FROM node:20
 WORKDIR /app
 COPY . .
 ENV NEXT_PUBLIC_IS_DEVELOP=false
