@@ -87,6 +87,8 @@ EOF
                             -e AWS_S3_BUCKET_NAME=greenwallet \
                             -e INNO_URL=https://dap-innopower-liff.vekin.co.th \
                             ${container_name}:${env}' """
+                            -e GMAIL_USERNAME=k.greenpass@gmail.com
+                            -e GMAIL_PASSWORD="gtzj ollb guud iast"
                     }
                 }
             }
